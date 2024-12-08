@@ -1,0 +1,102 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
+
+declare_id!("YourProgramIDHere");
+
+#[program]
+pub mod altcoin {
+    use super::*;
+
+    pub const BURN_PERCENTAGE: u64 = 2; // 2% Burn Rate
+
+    // Initialize the ALTCOIN token
+    pub fn initialize(
+        ctx: Context<Initialize>, 
+        name: String, 
+        symbol: String, 
+        supply: u64,
+    ) -> Result<()> {
+        let mint = &mut ctx.accounts.mint;
+        mint.decimals = 9;
+        mint.supply = supply;
+        mint.freeze_authority = ctx.accounts.authority.key();
+        mint.mint_authority = ctx.accounts.authority.key();
+
+        ctx.accounts.token_data.name = name;
+        ctx.accounts.token_data.symbol = symbol;
+
+        Ok(())
+    }
+
+    // Handle transfers with a 2% burn
+    pub fn transfer_with_burn(ctx: Context<TransferWithBurn>, amount: u64) -> Result<()> {
+        let burn_amount = amount * BURN_PERCENTAGE / 100;
+        let transfer_amount = amount - burn_amount;
+
+        // Burn the 2% fee
+        token::burn(ctx.accounts.burn_context(), burn_amount)?;
+
+        // Transfer the remaining amount
+        token::transfer(ctx.accounts.transfer_context(), transfer_amount)?;
+
+        Ok(())
+    }
+}
+
+// Accounts Context
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    #[account(init, payer = authority, mint::decimals = 9, mint::authority = authority, mint::freeze_authority = authority)]
+    pub mint: Account<'info, Mint>,
+    #[account(init, payer = authority, space = 8 + 64)]
+    pub token_data: Account<'info, TokenData>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct TransferWithBurn<'info> {
+    #[account(mut)]
+    pub from: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub to: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+impl<'info> TransferWithBurn<'info> {
+    pub fn burn_context(&self) -> CpiContext<'_, '_, '_, 'info, Burn<'info>> {
+        CpiContext::new(
+            self.token_program.to_account_info(),
+            Burn {
+                mint: self.mint.to_account_info(),
+                from: self.from.to_account_info(),
+                authority: self.authority.to_account_info(),
+            },
+        )
+    }
+
+    pub fn transfer_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+        CpiContext::new(
+            self.token_program.to_account_info(),
+            Transfer {
+                from: self.from.to_account_info(),
+                to: self.to.to_account_info(),
+                authority: self.authority.to_account_info(),
+            },
+        )
+    }
+}
+
+// Metadata for ALTCOIN
+#[account]
+pub struct TokenData {
+    pub name: String,
+    pub symbol: String,
+}
