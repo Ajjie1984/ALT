@@ -1,0 +1,60 @@
+use anchor_lang::prelude::*;
+use anchor_lang::ToAccountInfo;
+use anchor_spl::token::{Mint, Token, TokenAccount};
+use solana_program_test::*;
+use solana_sdk::{signature::Keypair, signer::Signer, transport::TransportError};
+
+#[tokio::test]
+async fn test_transfer_with_burn() -> Result<(), TransportError> {
+    let program_test = ProgramTest::new("altcoin", id(), processor!(altcoin::entry));
+
+    let mut context = program_test.start_with_context().await;
+
+    // Create mint and accounts
+    let mint = Keypair::new();
+    let user_account = Keypair::new();
+    let burn_account = Keypair::new();
+    let mint_authority = Keypair::new();
+
+    let total_supply = 999_999_999_999_999;
+    let burn_rate = 2; // 2%
+
+    // Initialize Mint
+    altcoin::initialize(
+        &mut context,
+        mint.pubkey(),
+        total_supply,
+        "ALTCOIN".to_string(),
+        "ALT".to_string(),
+        9,
+        mint_authority.pubkey(),
+    )
+    .await?;
+
+    // Perform a transaction
+    let transfer_amount = 1_000_000;
+    let expected_burn = transfer_amount * burn_rate / 100;
+    let expected_transfer = transfer_amount - expected_burn;
+
+    altcoin::transfer_with_burn(
+        &mut context,
+        user_account.pubkey(),
+        burn_account.pubkey(),
+        mint.pubkey(),
+        transfer_amount,
+    )
+    .await?;
+
+    // Verify results
+    assert_eq!(
+        user_account.to_account_info().lamports.borrow(),
+        expected_transfer
+    );
+
+    assert_eq!(
+        burn_account.to_account_info().lamports.borrow(),
+        expected_burn
+    );
+
+    Ok(())
+}
